@@ -1,5 +1,6 @@
 import hmac
 import os
+from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 from groq import Groq
@@ -23,13 +24,39 @@ from memory import (
     get_relevant_memories,
 )
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
 
 st.set_page_config(
     page_title="My Personal AI",
     page_icon="🧠",
     layout="wide",
 )
+
+st.session_state.setdefault("app_theme", "Dark")
+theme_variables = ""
+if st.session_state["app_theme"] == "Light":
+    theme_variables = """
+:root {
+    color-scheme: light;
+    --app-bg: #f4f6fb;
+    --panel-bg: #ffffff;
+    --panel-border: #e1e5ef;
+    --text-main: #202435;
+    --text-muted: #687086;
+    --accent: #6555d9;
+    --accent-soft: rgba(101, 85, 217, 0.14);
+    --sidebar-bg: #eef0f7;
+    --header-bg: rgba(244, 246, 251, 0.88);
+    --chat-bg: rgba(255, 255, 255, 0.92);
+    --button-bg: #ffffff;
+    --button-hover-bg: #f1efff;
+    --button-hover-text: #342d70;
+    --button-border: #dfe3ed;
+    --input-border: #d3d8e5;
+    --upload-border: #c9cfe0;
+    --upload-bg: rgba(255, 255, 255, 0.72);
+}
+"""
 
 st.markdown("""
 <style>
@@ -42,7 +69,19 @@ st.markdown("""
     --text-muted: #a0a8b8;
     --accent: #8b7cff;
     --accent-soft: rgba(139, 124, 255, 0.14);
+    --sidebar-bg: #131720;
+    --header-bg: rgba(16, 19, 27, 0.82);
+    --chat-bg: rgba(23, 27, 38, 0.76);
+    --button-bg: #1b202c;
+    --button-hover-bg: #25263a;
+    --button-hover-text: #ffffff;
+    --button-border: #343b4b;
+    --input-border: #373e4e;
+    --upload-border: #454d60;
+    --upload-bg: rgba(23, 27, 38, 0.55);
 }
+
+/*THEME_VARIABLES*/
 
 .stApp {
     background:
@@ -58,11 +97,11 @@ st.markdown("""
 }
 
 header[data-testid="stHeader"] {
-    background: rgba(16, 19, 27, 0.82);
+    background: var(--header-bg);
 }
 
 section[data-testid="stSidebar"] {
-    background: #131720;
+    background: var(--sidebar-bg);
     border-right: 1px solid var(--panel-border);
 }
 
@@ -75,7 +114,7 @@ h1, h2, h3 {
 }
 
 [data-testid="stChatMessage"] {
-    background: rgba(23, 27, 38, 0.76);
+    background: var(--chat-bg);
     border: 1px solid var(--panel-border);
     border-radius: 18px;
     padding: 1.1rem 1.25rem;
@@ -140,7 +179,7 @@ h1, h2, h3 {
 
 [data-testid="stChatInput"] {
     background: var(--panel-bg);
-    border: 1px solid #373e4e;
+    border: 1px solid var(--input-border);
     border-radius: 18px;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
 }
@@ -157,29 +196,34 @@ h1, h2, h3 {
 
 .stButton > button {
     min-height: 2.65rem;
-    border: 1px solid #343b4b;
+    border: 1px solid var(--button-border);
     border-radius: 12px;
-    background: #1b202c;
+    background: var(--button-bg);
     color: var(--text-main);
     transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
 .stButton > button:hover {
     border-color: var(--accent);
-    background: #25263a;
-    color: #fff;
+    background: var(--button-hover-bg);
+    color: var(--button-hover-text);
     transform: translateY(-1px);
 }
 
 [data-testid="stFileUploader"] section {
-    border: 1px dashed #454d60;
+    border: 1px dashed var(--upload-border);
     border-radius: 14px;
-    background: rgba(23, 27, 38, 0.55);
+    background: var(--upload-bg);
 }
 
 section[data-testid="stSidebar"] .stButton > button {
     justify-content: flex-start;
     text-align: left;
+}
+
+section[data-testid="stSidebar"] [data-testid="stPopover"] > button {
+    justify-content: center;
+    text-align: center;
 }
 
 hr {
@@ -197,7 +241,7 @@ hr {
     }
 }
 </style>
-""", unsafe_allow_html=True)
+""".replace("/*THEME_VARIABLES*/", theme_variables), unsafe_allow_html=True)
 
 
 def get_setting(name, default=None):
@@ -211,7 +255,6 @@ def get_setting(name, default=None):
         secret_value = None
 
     return str(secret_value) if secret_value is not None else default
-
 
 API_KEY = get_setting("GROQ_API_KEY")
 APP_PASSWORD = get_setting("APP_PASSWORD")
@@ -312,6 +355,13 @@ with st.sidebar:
             </div>
         </div>
     """, unsafe_allow_html=True)
+    st.segmented_control(
+        "Appearance",
+        options=["Dark", "Light"],
+        key="app_theme",
+        label_visibility="collapsed",
+        use_container_width=True,
+    )
     if st.button("Log out", use_container_width=True):
         st.session_state["authenticated"] = False
         st.rerun()
@@ -447,33 +497,54 @@ for conversation in conversations:
             st.rerun()
 
     with col2:
-        if st.button(
-            "🗑️",
-            key=f"delete_chat_{chat_id}",
-            help="Delete this conversation",
-        ):
-            st.session_state.confirm_delete_chat = chat_id
+        with st.popover("⋯", help="Conversation options", use_container_width=True):
+            with st.form(key=f"rename_chat_form_{chat_id}"):
+                renamed_title = st.text_input(
+                    "Conversation name",
+                    value=conversation["title"],
+                    max_chars=60,
+                    key=f"rename_chat_title_{chat_id}",
+                )
+                if st.form_submit_button("Save name", use_container_width=True):
+                    if renamed_title.strip():
+                        update_conversation_title(
+                            chat_id,
+                            renamed_title.strip(),
+                        )
+                        st.rerun()
+                    else:
+                        st.error("Conversation name cannot be empty.")
 
-    if st.session_state.get("confirm_delete_chat") == chat_id:
-        st.sidebar.warning(f"Delete '{label}' permanently?")
-
-        yes_col, no_col = st.sidebar.columns(2)
-
-        with yes_col:
-            if st.button("Delete", key=f"confirm_{chat_id}"):
-                delete_conversation(chat_id)
-
-                if st.session_state.get("conversation_id") == chat_id:
-                    st.session_state["conversation_id"] = create_conversation()
-                    st.session_state.pop("loaded_conversation_id", None)
-                    st.session_state.pop("chat_messages", None)
-
-                st.session_state.pop("confirm_delete_chat", None)
-                st.rerun()
-
-        with no_col:
-            if st.button("Cancel", key=f"cancel_{chat_id}"):
-                st.session_state.pop("confirm_delete_chat", None)
+            if st.session_state.get("confirm_delete_chat") == chat_id:
+                st.warning("Delete this conversation permanently?")
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    if st.button(
+                        "Delete",
+                        key=f"confirm_delete_{chat_id}",
+                        use_container_width=True,
+                    ):
+                        delete_conversation(chat_id)
+                        if st.session_state.get("conversation_id") == chat_id:
+                            st.session_state["conversation_id"] = create_conversation()
+                            st.session_state.pop("loaded_conversation_id", None)
+                            st.session_state.pop("chat_messages", None)
+                        st.session_state.pop("confirm_delete_chat", None)
+                        st.rerun()
+                with cancel_col:
+                    if st.button(
+                        "Cancel",
+                        key=f"cancel_delete_{chat_id}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.pop("confirm_delete_chat", None)
+                        st.rerun()
+            elif st.button(
+                "Delete conversation",
+                key=f"delete_chat_{chat_id}",
+                use_container_width=True,
+            ):
+                st.session_state.confirm_delete_chat = chat_id
                 st.rerun()
 
 if "conversation_id" not in st.session_state:
