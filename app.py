@@ -360,7 +360,7 @@ with st.sidebar:
         options=["Dark", "Light"],
         key="app_theme",
         label_visibility="collapsed",
-        use_container_width=True,
+        width="stretch",
     )
     if st.button("Log out", use_container_width=True):
         st.session_state["authenticated"] = False
