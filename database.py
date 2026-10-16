@@ -82,6 +82,12 @@ def initialize_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
 
 def create_conversation(title="New conversation"):
     with get_connection() as conn:
@@ -230,6 +236,42 @@ def clear_all_memories():
     """Delete every saved memory."""
     with get_connection() as conn:
         _execute(conn, "DELETE FROM memories")
+
+
+def get_preference(key, default=None):
+    """Return one persisted app preference."""
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            "SELECT value FROM app_preferences WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return row["value"] if row else default
+
+
+def get_all_preferences():
+    """Return persisted app preferences as a key/value mapping."""
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            "SELECT key, value FROM app_preferences ORDER BY key",
+        ).fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+
+def set_preference(key, value):
+    """Create or update one persisted app preference."""
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO app_preferences (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, str(value)),
+        )
+
 
 def delete_conversation(conversation_id):
     """Delete a conversation and all its messages."""

@@ -76,8 +76,7 @@ Rules:
         return saved_count
 
     except Exception as error:
-        print(f"Memory extraction failed: {error}")
-        return 0
+        raise RuntimeError(f"Memory extraction failed: {error}") from error
 
 def get_relevant_memories(query):
     """Retrieve memories relevant to the current question."""

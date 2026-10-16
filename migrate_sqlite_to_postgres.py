@@ -16,6 +16,7 @@ TABLE_COLUMNS = {
         "created_at",
     ),
     "memories": ("id", "fact", "category", "created_at"),
+    "app_preferences": ("key", "value"),
 }
 
 
@@ -34,10 +35,17 @@ def migrate():
 
     source = sqlite3.connect(DB_PATH)
     try:
+        source.execute("""
+            CREATE TABLE IF NOT EXISTS app_preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
         source.row_factory = sqlite3.Row
         rows_by_table = {
             table: source.execute(
-                f"SELECT {', '.join(columns)} FROM {table} ORDER BY id"
+                f"SELECT {', '.join(columns)} FROM {table} "
+                f"ORDER BY {columns[0]}"
             ).fetchall()
             for table, columns in TABLE_COLUMNS.items()
         }
@@ -67,16 +75,17 @@ def migrate():
                     destination.execute(query, tuple(row))
 
             for table in TABLE_COLUMNS:
-                destination.execute(
-                    f"""
-                    SELECT setval(
-                        pg_get_serial_sequence('{table}', 'id'),
-                        COALESCE(MAX(id), 1),
-                        COUNT(*) > 0
+                if "id" in TABLE_COLUMNS[table]:
+                    destination.execute(
+                        f"""
+                        SELECT setval(
+                            pg_get_serial_sequence('{table}', 'id'),
+                            COALESCE(MAX(id), 1),
+                            COUNT(*) > 0
+                        )
+                        FROM {table}
+                        """
                     )
-                    FROM {table}
-                    """
-                )
 
     for table, rows in rows_by_table.items():
         print(f"Migrated {len(rows)} {table} row(s).")
