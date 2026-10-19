@@ -28,6 +28,12 @@ APP_PASSWORD = "a long, unique password"
 DATABASE_URL = "postgresql://user:password@host:port/database?sslmode=require"
 ```
 
+Replace the example's username, password, hostname, port, and database name
+with the values from your provider; do not use placeholder values such as
+`host` or `port` literally. Use the complete PostgreSQL connection URI from
+your provider when possible. If its password contains URL-reserved characters,
+URL-encode them. Keep the URI private because it contains database credentials.
+
 Use a strong password and do not share the app link or password publicly.
 The login gate protects this single-user app and all conversations/memories
 are shared in the same private account.

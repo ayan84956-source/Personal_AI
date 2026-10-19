@@ -2,31 +2,50 @@ import sqlite3
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DB_PATH = Path(__file__).parent / "data" / "personal_ai.db"
-
 
 def _database_url():
     return os.getenv("DATABASE_URL", "").strip()
 
-
 def _uses_postgres():
     return bool(_database_url())
+
+def _validate_database_url(database_url):
+    """Reject common connection-string placeholders before connecting."""
+    try:
+        parsed_url = urlsplit(database_url)
+        hostname = parsed_url.hostname
+        parsed_url.port
+    except ValueError as error:
+        raise ValueError(
+            "DATABASE_URL has an invalid host or port. Use the complete "
+            "PostgreSQL connection URL from your database provider."
+        ) from error
+
+    placeholders = {"host", "hostname", "db_host", "your-host"}
+    if not hostname or hostname.lower() in placeholders:
+        raise ValueError(
+            "DATABASE_URL is using a placeholder hostname. Replace it with "
+            "the real database host from your PostgreSQL provider."
+        )
 
 
 @contextmanager
 def get_connection():
-    database_url = _database_url()
-    if database_url:
-        if not database_url.startswith(("postgres://", "postgresql://")):
+    DATABASE_URL = _database_url()
+    if DATABASE_URL:
+        if not DATABASE_URL.startswith(("postgres://", "postgresql://")):
             raise ValueError(
                 "DATABASE_URL must be a PostgreSQL connection URL."
             )
+        _validate_database_url(DATABASE_URL)
 
         import psycopg
         from psycopg.rows import dict_row
 
-        conn = psycopg.connect(database_url, row_factory=dict_row)
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     else:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(DB_PATH)
