@@ -14,6 +14,13 @@ def _uses_postgres():
 
 def _validate_database_url(database_url):
     """Reject common connection-string placeholders before connecting."""
+    if "******" in database_url or database_url.startswith("******"):
+        raise ValueError(
+            "DATABASE_URL still contains placeholder masking. Remove the "
+            "****** text and set a real PostgreSQL URL, or unset DATABASE_URL "
+            "to keep using SQLite for local development."
+        )
+
     try:
         parsed_url = urlsplit(database_url)
         hostname = parsed_url.hostname

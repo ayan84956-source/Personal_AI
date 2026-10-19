@@ -11,6 +11,9 @@ persistent access across deployments; access is protected by `APP_PASSWORD`.
 - Search, edit, or delete saved memories. Automatic memory extraction can be
   turned off independently of memory retrieval.
 - Conversation history and saved memories persist in the configured database.
+- Full chat history stays saved and visible, while replies use the latest 20
+  exchanges to keep long conversations focused without resending the entire
+  transcript on every turn.
 
 ## Actions and files
 
