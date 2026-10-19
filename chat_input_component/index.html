@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+      --surface: #171b26;
+      --border: #373e4e;
+      --text: #f2f4f8;
+      --muted: #a0a8b8;
+      --accent: #8b7cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: transparent; }
+    .composer {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface);
+      padding: 10px 12px;
+    }
+    textarea {
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      max-height: 160px;
+      resize: vertical;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+      font: inherit;
+      font-size: 15px;
+    }
+    textarea::placeholder { color: var(--muted); }
+    .controls { display: flex; align-items: center; justify-content: space-between; }
+    .buttons { display: flex; align-items: center; gap: 8px; }
+    button {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      color: var(--text);
+      background: transparent;
+      font: inherit;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); background: #25263a; }
+    button:disabled { cursor: wait; opacity: 0.55; }
+    button.send { color: #10131b; background: var(--accent); border-color: var(--accent); }
+    button.recording { color: #fff; background: #c23b55; border-color: #c23b55; }
+    .status, .files { color: var(--muted); font-size: 12px; }
+    .files { padding: 4px 0 8px; }
+    .read-aloud { width: auto; height: auto; padding: 6px 12px; border-radius: 12px; font-size: 14px; }
+    .listen-status { margin-left: 8px; color: var(--muted); font-size: 12px; }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const root = document.getElementById("root");
+    const send = (value) => window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value,
+      dataType: "json"
+    }, "*");
+    const resize = (height) => window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height
+    }, "*");
+    const readFile = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        name: file.name,
+        type: file.type,
+        data: String(reader.result).split(",")[1]
+      });
+      reader.onerror = () => reject(reader.error || new Error("File read failed"));
+      reader.readAsDataURL(file);
+    });
+
+    function render(args) {
+      if (args.theme === "Light") {
+        document.documentElement.style.colorScheme = "light";
+        document.documentElement.style.setProperty("--surface", "#ffffff");
+        document.documentElement.style.setProperty("--border", "#d3d8e5");
+        document.documentElement.style.setProperty("--text", "#202435");
+        document.documentElement.style.setProperty("--muted", "#687086");
+        document.documentElement.style.setProperty("--accent", "#6555d9");
+      } else {
+        document.documentElement.style.colorScheme = "dark";
+        document.documentElement.style.setProperty("--surface", "#171b26");
+        document.documentElement.style.setProperty("--border", "#373e4e");
+        document.documentElement.style.setProperty("--text", "#f2f4f8");
+        document.documentElement.style.setProperty("--muted", "#a0a8b8");
+        document.documentElement.style.setProperty("--accent", "#8b7cff");
+      }
+      if (args.mode === "speech") {
+        root.innerHTML = '<button class="read-aloud" type="button">🔊 Read aloud</button><span class="listen-status" aria-live="polite"></span>';
+        const button = root.querySelector("button");
+        const status = root.querySelector(".listen-status");
+        button.addEventListener("click", () => {
+          if (!("speechSynthesis" in window)) {
+            status.textContent = "Speech playback is not supported in this browser.";
+            return;
+          }
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(args.speech_text || "");
+          utterance.onstart = () => { status.textContent = "Speaking…"; };
+          utterance.onend = () => { status.textContent = ""; };
+          utterance.onerror = () => { status.textContent = "Could not play speech."; };
+          window.speechSynthesis.speak(utterance);
+        });
+        resize(48);
+        return;
+      }
+
+      root.innerHTML = `
+        <div class="composer">
+          <textarea aria-label="Message" placeholder="Ask anything — plans, ideas, questions..."></textarea>
+          <div class="files" aria-live="polite"></div>
+          <div class="controls">
+            <span class="status" aria-live="polite"></span>
+            <div class="buttons">
+              <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.txt,.md,.csv">
+              <button class="attach" type="button" aria-label="Attach files" title="Attach files">＋</button>
+              <button class="mic" type="button" aria-label="Record a voice message" title="Record a voice message">🎙</button>
+              <button class="send" type="button" aria-label="Send message" title="Send message">↑</button>
+            </div>
+          </div>
+        </div>`;
+
+      const textarea = root.querySelector("textarea");
+      const fileInput = root.querySelector('input[type="file"]');
+      const filesLabel = root.querySelector(".files");
+      const status = root.querySelector(".status");
+      const mic = root.querySelector(".mic");
+      let selectedFiles = [];
+      let recorder = null;
+      let recordingChunks = [];
+      let audioStream = null;
+      let sending = false;
+
+      const updateFiles = () => {
+        filesLabel.textContent = selectedFiles.map((file) => file.name).join(" · ");
+        resize(document.body.scrollHeight);
+      };
+      const submit = async (audio = null) => {
+        if (sending) return;
+        const text = textarea.value.trim();
+        if (!text && !selectedFiles.length && !audio) return;
+        sending = true;
+        root.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        status.textContent = "Sending…";
+        try {
+          const files = await Promise.all(selectedFiles.map(readFile));
+          send({id: `${Date.now()}-${Math.random()}`, text, files, audio});
+          textarea.value = "";
+          selectedFiles = [];
+          updateFiles();
+          status.textContent = "";
+        } catch (error) {
+          status.textContent = `Could not prepare attachment: ${error.message}`;
+          sending = false;
+          root.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+        }
+      };
+
+      root.querySelector(".attach").addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", () => {
+        const incomingFiles = Array.from(fileInput.files);
+        const totalBytes = [...selectedFiles, ...incomingFiles]
+          .reduce((total, file) => total + file.size, 0);
+        if (totalBytes > 25 * 1024 * 1024) {
+          status.textContent = "Attachments must total 25 MB or less.";
+          fileInput.value = "";
+          return;
+        }
+        selectedFiles = [...selectedFiles, ...incomingFiles];
+        fileInput.value = "";
+        status.textContent = "";
+        updateFiles();
+      });
+      root.querySelector(".send").addEventListener("click", () => submit());
+      textarea.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          submit();
+        }
+      });
+      mic.addEventListener("click", async () => {
+        if (recorder && recorder.state === "recording") {
+          recorder.stop();
+          mic.classList.remove("recording");
+          mic.textContent = "🎙";
+          mic.disabled = true;
+          status.textContent = "Preparing voice message…";
+          return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+          status.textContent = "Microphone recording is not supported in this browser.";
+          return;
+        }
+        try {
+          audioStream = await navigator.mediaDevices.getUserMedia({audio: true});
+          const options = MediaRecorder.isTypeSupported("audio/webm") ? {mimeType: "audio/webm"} : {};
+          recorder = new MediaRecorder(audioStream, options);
+          recordingChunks = [];
+          recorder.ondataavailable = (event) => {
+            if (event.data.size) recordingChunks.push(event.data);
+          };
+          recorder.onstop = async () => {
+            const blob = new Blob(recordingChunks, {type: recorder.mimeType || "audio/webm"});
+            audioStream.getTracks().forEach((track) => track.stop());
+            audioStream = null;
+            mic.disabled = false;
+            if (blob.size > 25 * 1024 * 1024) {
+              status.textContent = "Recording is too large (maximum 25 MB).";
+              return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => submit({
+              name: blob.type.includes("ogg")
+                ? "voice-message.ogg"
+                : blob.type.includes("mp4")
+                  ? "voice-message.mp4"
+                  : "voice-message.webm",
+              type: (blob.type || "audio/webm").split(";")[0],
+              data: String(reader.result).split(",")[1]
+            });
+            reader.onerror = () => { status.textContent = "Could not prepare the recording."; };
+            reader.readAsDataURL(blob);
+          };
+          recorder.start();
+          mic.classList.add("recording");
+          mic.textContent = "■";
+          status.textContent = "Recording — press ■ to finish (max 2 minutes).";
+          window.setTimeout(() => {
+            if (recorder && recorder.state === "recording") {
+              recorder.stop();
+              mic.classList.remove("recording");
+              mic.textContent = "🎙";
+              mic.disabled = true;
+            }
+          }, 120000);
+        } catch (error) {
+          if (audioStream) {
+            audioStream.getTracks().forEach((track) => track.stop());
+            audioStream = null;
+          }
+          status.textContent = `Microphone unavailable: ${error.message}`;
+        }
+      });
+      resize(document.body.scrollHeight);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "streamlit:render") render(event.data.args || {});
+    });
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1
+    }, "*");
+    window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 100}, "*");
+  </script>
+</body>
+</html>

@@ -1,10 +1,14 @@
+import base64
 import hmac
+import io
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from groq import Groq
 from streamlit.errors import StreamlitSecretNotFoundError
@@ -38,6 +42,11 @@ st.set_page_config(
     page_title="My Personal AI",
     page_icon="🧠",
     layout="wide",
+)
+
+chat_input_component = components.declare_component(
+    "personal_ai_chat_input",
+    path=str(Path(__file__).resolve().with_name("chat_input_component")),
 )
 
 st.session_state.setdefault("app_theme", "Dark")
@@ -585,6 +594,67 @@ def generate_chat_title(first_message):
         print("Title generation failed:", error)
         return " ".join(first_message.split()[:6])[:60] or "New Chat"
 
+
+def display_paced_response(placeholder, text, words_per_update=3, delay=0.35):
+    """Reveal a completed response in readable, paced chunks."""
+    word_spans = list(re.finditer(r"\S+\s*", text))
+    for end in range(words_per_update, len(word_spans), words_per_update):
+        placeholder.markdown(
+            text[:word_spans[end - 1].end()] + " ▌"
+        )
+        time.sleep(delay)
+    placeholder.markdown(text)
+
+
+def component_file_to_bytesio(file_data):
+    """Convert a chat-composer attachment to the file interface used here."""
+    if not isinstance(file_data, dict):
+        raise ValueError("An attachment from the chat composer was invalid.")
+
+    name = file_data.get("name")
+    encoded_data = file_data.get("data")
+    if not isinstance(name, str) or not isinstance(encoded_data, str):
+        raise ValueError("An attachment from the chat composer was invalid.")
+
+    try:
+        content = base64.b64decode(encoded_data, validate=True)
+    except ValueError as error:
+        raise ValueError("An attachment could not be decoded.") from error
+    if len(content) > 25 * 1024 * 1024:
+        raise ValueError("Attachments must be 25 MB or smaller.")
+
+    uploaded_file = io.BytesIO(content)
+    uploaded_file.name = name
+    return uploaded_file
+
+
+def transcribe_voice_message(audio_data):
+    """Transcribe a recorded chat message using Groq's speech recognition."""
+    if not isinstance(audio_data, dict):
+        raise ValueError("The voice recording was invalid.")
+
+    encoded_data = audio_data.get("data")
+    filename = audio_data.get("name", "voice-message.webm")
+    content_type = audio_data.get("type", "audio/webm")
+    if not isinstance(encoded_data, str):
+        raise ValueError("The voice recording was invalid.")
+
+    try:
+        audio_bytes = base64.b64decode(encoded_data, validate=True)
+    except ValueError as error:
+        raise ValueError("The voice recording could not be decoded.") from error
+    if not audio_bytes:
+        raise ValueError("The voice recording was empty.")
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        raise ValueError("The voice recording exceeds the 25 MB limit.")
+
+    transcription = client.audio.transcriptions.create(
+        file=(filename, audio_bytes, content_type),
+        model=os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo"),
+    )
+    return transcription.text.strip()
+
+
 st.sidebar.divider()
 
 with st.sidebar:
@@ -666,7 +736,9 @@ with st.sidebar.expander("Privacy & data ownership"):
     )
     st.write(
         "Uploaded files are sent to Groq only after you consent in the chat. "
-        "This app does not retain uploaded files as attachments."
+        "Voice recordings are sent to Groq for transcription only after "
+        "consent. This app does not retain uploaded files or recordings as "
+        "attachments."
     )
     st.caption(
         "This app does not encrypt the SQLite database. Protect your device, "
@@ -937,12 +1009,19 @@ if not has_chat_history:
         unsafe_allow_html=True,
     )
 
-for message in st.session_state.chat_messages:
+for message_index, message in enumerate(st.session_state.chat_messages):
     if message["role"] not in ("user", "assistant"):
         continue
 
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message["role"] == "assistant":
+            chat_input_component(
+                mode="speech",
+                speech_text=message["content"],
+                theme=st.session_state["app_theme"],
+                key=f"personal_ai_speech_{conversation_id}_{message_index}",
+            )
 
 if not has_chat_history:
     starter_prompts = {
@@ -1053,45 +1132,92 @@ if not has_chat_history:
                     st.session_state["suggested_prompt"] = prompt
 
 st.checkbox(
-    "Allow uploaded file contents to be sent to Groq",
+    "Allow file contents and voice recordings to be sent to Groq",
     key="file_upload_consent",
     help=(
-        "While enabled, file text and image content can be sent to Groq when "
-        "you attach a file. Uncheck it to disable file-content sharing."
+        "While enabled, attached file contents and recorded voice messages "
+        "can be sent to Groq for analysis or transcription."
     ),
 )
 
-prompt_data = st.chat_input(
-    "Ask anything — plans, ideas, questions...",
-    accept_file="multiple",
-    file_type=["pdf", "png", "jpg", "jpeg", "txt", "md", "csv"],
+prompt_data = chat_input_component(
+    mode="composer",
+    theme=st.session_state["app_theme"],
+    key="personal_ai_chat_input",
 )
 
-if st.session_state.get("suggested_prompt"):
-    prompt_data = st.session_state.pop("suggested_prompt")
-
-prompt = None
+prompt = st.session_state.pop("suggested_prompt", None)
+if not isinstance(prompt, str):
+    prompt = None
 uploaded_files = []
+voice_recording = None
+if isinstance(prompt_data, dict):
+    input_id = prompt_data.get("id")
+    if (
+        isinstance(input_id, str)
+        and input_id != st.session_state.get("processed_chat_input_id")
+    ):
+        st.session_state["processed_chat_input_id"] = input_id
+        typed_text = prompt_data.get("text", "")
+        if isinstance(typed_text, str) and typed_text.strip():
+            prompt = typed_text.strip()
 
-if isinstance(prompt_data, str):
-    prompt = prompt_data
-elif prompt_data:
-    prompt = prompt_data.text
-    uploaded_files = prompt_data.files or []
+        attachments = prompt_data.get("files", [])
+        if attachments and st.session_state["file_upload_consent"]:
+            try:
+                uploaded_files = [
+                    component_file_to_bytesio(item)
+                    for item in attachments
+                ]
+                if sum(file.getbuffer().nbytes for file in uploaded_files) > (
+                    25 * 1024 * 1024
+                ):
+                    raise ValueError(
+                        "Combined attachments must be 25 MB or smaller."
+                    )
+            except ValueError as error:
+                st.error(f"Could not read attachment: {error}")
+                uploaded_files = []
+        elif attachments:
+            st.warning(
+                "The attached files were not sent. Enable the consent option "
+                "above and attach them again if you want the assistant to "
+                "analyze them."
+            )
+
+        voice_recording = prompt_data.get("audio")
+        if voice_recording:
+            if not st.session_state["file_upload_consent"]:
+                st.warning(
+                    "The voice recording was not sent. Enable the consent "
+                    "option above and record it again to use voice input."
+                )
+            else:
+                try:
+                    with st.spinner("Transcribing your voice message..."):
+                        transcription = transcribe_voice_message(
+                            voice_recording
+                        )
+                    if transcription:
+                        prompt = "\n".join(
+                            part
+                            for part in (prompt, transcription)
+                            if part
+                        )
+                    else:
+                        st.warning(
+                            "No speech was detected. Please try recording again."
+                        )
+                except Exception as error:
+                    st.error(f"Voice transcription failed: {error}")
 
 if (
     not prompt
     and uploaded_files
     and st.session_state["file_upload_consent"]
+    and not voice_recording
 ):
     prompt = "Please analyze the attached file(s)."
-
-if uploaded_files and not st.session_state["file_upload_consent"]:
-    st.warning(
-        "The attached files were not sent. Check the consent box and attach "
-        "them again if you want the assistant to analyze them."
-    )
-    uploaded_files = []
 
 assistant_placeholder = None
 
@@ -1235,7 +1361,6 @@ if prompt:
             completed_actions = []
             answer = None
             with st.spinner("Working through your request..."):
-                time.sleep(1.2)
                 for action_round in range(4):
                     request_options = {
                         "model": request_model,
@@ -1249,7 +1374,6 @@ if prompt:
                     response = client.chat.completions.create(
                         **request_options
                     )
-                    time.sleep(0.9)
                     assistant_message = response.choices[0].message
                     tool_calls = assistant_message.tool_calls or []
 
@@ -1297,7 +1421,16 @@ if prompt:
                 raise RuntimeError(
                     "The assistant returned an empty response. Please try again."
                 )
-            assistant_placeholder.markdown(answer)
+            display_paced_response(assistant_placeholder, answer)
+            chat_input_component(
+                mode="speech",
+                speech_text=answer,
+                theme=st.session_state["app_theme"],
+                key=(
+                    f"personal_ai_speech_{conversation_id}_"
+                    f"{len(st.session_state.chat_messages)}"
+                ),
+            )
             if completed_actions:
                 action_labels = {
                     "remember_fact": "Saved a memory",
