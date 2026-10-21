@@ -1,12 +1,20 @@
 import base64
 from io import BytesIO
 from pathlib import Path
-from pypdf import PdfReader
+from xml.etree import ElementTree
+from zipfile import BadZipFile, ZipFile
+
 from PIL import Image
+from pypdf import PdfReader
 
 
 MAX_TEXT_CHARS = 20000
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_DOCX_XML_BYTES = 2 * 1024 * 1024
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".tsx",
+    ".jsx", ".html", ".css", ".xml", ".yaml", ".yml", ".log", ".sql",
+}
 
 
 def extract_file_text(uploaded_file):
@@ -33,8 +41,48 @@ def extract_file_text(uploaded_file):
 
         return result[:MAX_TEXT_CHARS]
 
-    if name.endswith((".txt", ".md", ".csv")):
+    suffix = Path(name).suffix
+    if suffix in TEXT_EXTENSIONS:
         return raw.decode("utf-8", errors="replace")[:MAX_TEXT_CHARS]
+
+    if suffix == ".docx":
+        try:
+            with ZipFile(BytesIO(raw)) as document:
+                if (
+                    document.getinfo("word/document.xml").file_size
+                    > MAX_DOCX_XML_BYTES
+                ):
+                    raise ValueError(
+                        "The Word document contains too much text to process."
+                    )
+                xml = document.read("word/document.xml")
+        except (BadZipFile, KeyError) as error:
+            raise ValueError("The Word document could not be read.") from error
+
+        try:
+            root = ElementTree.fromstring(xml)
+        except ElementTree.ParseError as error:
+            raise ValueError(
+                "The Word document contains invalid content."
+            ) from error
+
+        namespace = {
+            "word": "http://schemas.openxmlformats.org/"
+            "wordprocessingml/2006/main"
+        }
+        paragraphs = []
+        for paragraph in root.findall(".//word:p", namespace):
+            text = "".join(
+                node.text or ""
+                for node in paragraph.findall(".//word:t", namespace)
+            )
+            if text:
+                paragraphs.append(text)
+        result = "\n".join(paragraphs)
+        return (
+            result[:MAX_TEXT_CHARS]
+            or "No readable text was found in this document."
+        )
 
     raise ValueError("Unsupported document format.")
 

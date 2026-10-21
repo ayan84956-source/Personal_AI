@@ -59,6 +59,32 @@ class AssistantActionTests(unittest.TestCase):
             },
         )
 
+    def test_web_search_validates_and_returns_results(self):
+        results = [{
+            "title": "A source",
+            "url": "https://example.com",
+            "snippet": "A short summary.",
+        }]
+        with patch(
+            "assistant_actions.web_search",
+            return_value=results,
+        ) as search:
+            result = execute_action(
+                "web_search",
+                {"query": "current information"},
+                conversation_id=1,
+            )
+
+        self.assertEqual(result, {"ok": True, "results": results})
+        search.assert_called_once_with("current information")
+
+        invalid = execute_action(
+            "web_search",
+            {"query": " "},
+            conversation_id=1,
+        )
+        self.assertFalse(invalid["ok"])
+
     def test_rename_current_conversation_updates_active_chat(self):
         with patch("assistant_actions.update_conversation_title") as rename:
             result = execute_action(

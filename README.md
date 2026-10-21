@@ -19,14 +19,25 @@ persistent access across deployments; access is protected by `APP_PASSWORD`.
 
 ## Actions and files
 
-When app actions are enabled, the assistant can save or search memories and
-rename the active conversation. These are the only assistant-executable
-actions; it cannot run shell commands or act on external accounts. Uploaded
-PDFs, text files, and images can be analyzed, with explicit consent before
-their contents are sent to Groq. The chat composer also supports microphone
-recording and sends voice messages to Groq for transcription only after the
-same explicit consent. Microphone access requires a secure browser context
-(HTTPS or localhost).
+Choose Assistant, Search agent, Research agent, or Developer tools mode in
+the sidebar. Web search is optional and disabled by default; when enabled,
+the search agent can use DuckDuckGo results and cite their source links.
+Search queries go to DuckDuckGo, and returned results are included in the
+request sent to Groq.
+
+File and document tools can read PDF, DOCX, common text/document formats,
+source code, and images. Sending attachment contents to Groq requires the
+file-tools setting and the separate chat consent control. The developer
+mode can explain, debug, and review supplied code, but does not run code or
+shell commands. When app actions are enabled, the assistant can also save or
+search memories and rename the active conversation; it cannot act on
+external accounts. The chat composer supports microphone recording and
+sends voice messages to Groq for transcription only after explicit consent.
+Microphone access requires a secure browser context (HTTPS or localhost).
+
+Agentic memory retrieves relevant saved facts for each reply and, when
+enabled, learns durable non-sensitive details from user messages. Memories
+remain editable and deletable in the sidebar.
 
 ## Privacy and data ownership
 

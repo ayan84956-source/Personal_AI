@@ -5,6 +5,7 @@ from database import (
     search_memories,
     update_conversation_title,
 )
+from web_tools import WebSearchError, web_search
 
 
 ACTION_TOOLS = [
@@ -53,6 +54,27 @@ ACTION_TOOLS = [
                     "query": {
                         "type": "string",
                         "description": "A short search phrase.",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the public web for current information and return "
+                "titles, snippets, and source URLs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "A concise web search query.",
                     },
                 },
                 "required": ["query"],
@@ -132,6 +154,19 @@ def execute_action(name, raw_arguments, conversation_id):
                 for memory in matches
             ],
         }
+
+    if name == "web_search":
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 500:
+            return {
+                "ok": False,
+                "error": "A search query must be between 1 and 500 characters.",
+            }
+        try:
+            results = web_search(query.strip())
+        except WebSearchError as error:
+            return {"ok": False, "error": str(error)}
+        return {"ok": True, "results": results}
 
     if name == "rename_current_conversation":
         title = arguments.get("title")
